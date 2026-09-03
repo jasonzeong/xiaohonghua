@@ -438,16 +438,16 @@ body{padding-top:calc(env(safe-area-inset-top) + 16px);padding-bottom:calc(env(s
 
     <!-- 同步 -->
     <div class="syncbox" id="syncBox">
-      <div class="st">☁️ 家庭多设备同步</div>
+      <div class="st">☁️ 家庭多设备同步（Cloudflare 云）</div>
       <div id="syncGuide">
         <ol class="steps">
-          <li>打开 <a href="https://jsonbin.io" target="_blank">jsonbin.io</a> 用邮箱免费注册并登录</li>
-          <li>右上角头像 → <b>API Keys</b> → 复制 <b>X-Master-Key</b></li>
-          <li>把 Key 粘到下面，点「🚀 创建新的家庭码」</li>
-          <li>把生成的<b>家庭码</b>发给另一台设备，粘贴后点「🔗 连接」</li>
+          <li>点「🚀 创建新的家庭码」生成一串专属码</li>
+          <li>把生成的<b>家庭码</b>发给另一台设备</li>
+          <li>另一台设备粘贴家庭码，点「🔗 连接」即可</li>
+          <li>数据自动存到 Cloudflare 云，随时打开、跨设备一致</li>
         </ol>
       </div>
-      <input id="sKey" placeholder="X-Master-Key（从 jsonbin.io 获取）" type="password">
+      <input id="sKey" type="hidden">
       <input id="sCode" placeholder="家庭码（另一台设备填同一个）">
       <div class="sbtns">
         <button class="btn g" onclick="createCode()">🚀 创建新的家庭码</button>
@@ -508,7 +508,8 @@ body{padding-top:calc(env(safe-area-inset-top) + 16px);padding-bottom:calc(env(s
 /* ================= 数据模型 =================
    红花数 = 流水汇总（事件溯源），两台设备合并流水即可，不会互相覆盖 */
 var KEY='xiaohonghua_v2';
-var API='https://api.jsonbin.io/v3/b';
+// 同步后端：Cloudflare Pages 用同源；GitHub Pages(github.io)走跨域到 Cloudflare Function（已开 CORS），两份托管共用同一份云端数据
+var API=(location.hostname.indexOf('github.io')>=0)?'https://xiaohonghua.pages.dev/api/sync':location.origin+'/api/sync';
 
 function defData(){
   return {
@@ -606,7 +607,7 @@ function doLogin(){
   document.getElementById('pgMain').style.display='';
   document.getElementById('curWho').textContent=curUser;
   render(); applyReadonly();
-  if(D.sync.key&&D.sync.code) setTimeout(syncPull,400);
+  if(D.sync.code) setTimeout(syncPull,400);
 }
 function logout(){
   if(!confirm('确定退出吗？')) return;
@@ -1012,14 +1013,14 @@ function setSync(state,txt){
   document.getElementById('syncTxt').textContent=txt;
 }
 function apiHdrs(extra){
-  var h={'Content-Type':'application/json','X-Master-Key':D.sync.key};
+  var h={'Content-Type':'application/json'};
   if(extra) for(var k in extra) h[k]=extra[k];
   return h;
 }
 function commit(){
   D.sync.last=Date.now();
   save(); render();
-  if(isParent&&D.sync.key&&D.sync.code){
+  if(isParent&&D.sync.code){
     clearTimeout(syncTimer);
     setSync('ing','同步中…');
     syncTimer=setTimeout(syncPush,1500);
@@ -1027,26 +1028,24 @@ function commit(){
 }
 function manualSync(){
   if(!isParent){ return; }
-  if(!D.sync.key||!D.sync.code){ toast('先在设置里配置同步','r'); return; }
+  if(!D.sync.code){ toast('先在设置里配置同步','r'); return; }
   setSync('ing','同步中…');
   syncPull();
 }
 async function createCode(){
   if(!isParent) return;
-  var key=(document.getElementById('sKey').value||'').trim();
-  if(!key){ toast('请先填写 X-Master-Key','r'); return; }
-  D.sync.key=key; save();
+  D.sync.key=''; save();
   setSync('ing','创建中…');
   try{
     var r=await fetch(API,{
       method:'POST',
-      headers:apiHdrs({'X-Bin-Name':'xiaohonghua-family','X-Bin-Private':'true'}),
+      headers:apiHdrs(),
       body:JSON.stringify({kids:D.kids,rewards:D.rewards,logs:[],done:{},
         goal:D.goal,pin:D.pin,rev:0,v:2})
     });
     if(!r.ok) throw new Error('HTTP '+r.status);
     var j=await r.json();
-    var id=j.metadata&&j.metadata.id;
+    var id=j.id||(j.metadata&&j.metadata.id);
     if(!id) throw new Error('未返回ID');
     D.sync.code=id; D.rev=Math.max(D.rev,1);
     save(); fillSet();
@@ -1059,14 +1058,12 @@ async function createCode(){
 }
 async function joinCode(){
   if(!isParent) return;
-  var key=(document.getElementById('sKey').value||'').trim();
   var code=(document.getElementById('sCode').value||'').trim();
-  if(!key){ toast('请填写 X-Master-Key','r'); return; }
   if(!code){ toast('请填写家庭码','r'); return; }
-  D.sync.key=key; D.sync.code=code; save();
+  D.sync.key=''; D.sync.code=code; save();
   setSync('ing','连接中…');
   try{
-    var r=await fetch(API+'/'+code+'/latest',{headers:{'X-Master-Key':key}});
+    var r=await fetch(API+'/'+code,{headers:apiHdrs()});
     if(!r.ok) throw new Error('HTTP '+r.status+'（家庭码或Key有误）');
     var j=await r.json();
     var rec=j.record||j;
@@ -1123,10 +1120,10 @@ function applyRemote(rec){
   if(m.added>0){ D.rev++; save(); }
 }
 async function syncPull(){
-  if(syncing||!D.sync.key||!D.sync.code) return;
+  if(syncing||!D.sync.code) return;
   syncing=true;
   try{
-    var r=await fetch(API+'/'+D.sync.code+'/latest',{headers:{'X-Master-Key':D.sync.key}});
+    var r=await fetch(API+'/'+D.sync.code,{headers:apiHdrs()});
     if(!r.ok) throw new Error('HTTP '+r.status);
     var j=await r.json();
     var rec=j.record||j;
@@ -1148,7 +1145,7 @@ async function syncPull(){
   }finally{ syncing=false; }
 }
 async function syncPush(silent){
-  if(!D.sync.key||!D.sync.code) return;
+  if(!D.sync.code) return;
   if(syncing&&!silent) return;
   syncing=true;
   if(!silent) setSync('ing','同步中…');
@@ -1169,7 +1166,7 @@ async function syncPush(silent){
 }
 function startPull(){
   clearInterval(pullTimer);
-  if(!D.sync.key||!D.sync.code) return;
+  if(!D.sync.code) return;
   pullTimer=setInterval(function(){
     if(document.visibilityState==='visible') syncPull();
   },20000);
@@ -1195,7 +1192,7 @@ function toast(msg,type){
 /* ================= 启动 ================= */
 (function init(){
   document.getElementById('pgLogin').style.display='';
-  if(D.sync.key&&D.sync.code){
+  if(D.sync.code){
     setSync('off','点击同步');
     startPull();
   }else{
