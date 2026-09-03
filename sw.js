@@ -3,11 +3,12 @@
      HTML（导航）  → Network First，在线永远拿最新版，断网回退缓存
      静态资源      → Cache First + 后台更新（Stale While Revalidate）
      jsonbin.io    → 不拦截，API 请求必须走网络
+     /api/*         → 不拦截，同步接口必须走网络、不能缓存
 
    升级改版时：把 VERSION 改成新值即可强制全量刷新缓存
 */
 
-const VERSION = 'xiaohonghua-v2.1';
+const VERSION = 'xiaohonghua-v2.2';
 const CACHE = VERSION;
 const SHELL = './index.html';
 
@@ -60,6 +61,7 @@ self.addEventListener('fetch', function (e) {
   const url = new URL(req.url);
   if (url.protocol !== 'http:' && url.protocol !== 'https:') return;
   if (url.hostname === 'jsonbin.io' || url.hostname === 'api.jsonbin.io') return;
+  if (url.pathname.indexOf('/api/') === 0) return;   // 同步接口走网络，绝不缓存
   if (url.pathname.indexOf('/sw.js') !== -1) return;   // SW 自身永远走网络
 
   const isHTML = req.mode === 'navigate' ||
